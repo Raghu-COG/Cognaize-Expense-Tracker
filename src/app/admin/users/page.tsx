@@ -32,18 +32,27 @@ export default function AdminUsersPage() {
 
   const fetchUsers = useCallback(async () => {
     setFetchError(null)
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .order('created_at', { ascending: true })
-    if (error) {
-      console.error('Failed to fetch users:', error.message)
-      setFetchError(`Failed to load users: ${error.message}. Check your Supabase connection.`)
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .order('created_at', { ascending: true })
+      console.log('[Supabase] users query result:', { data, error })
+      if (error) {
+        setFetchError(`Failed to load users: ${error.message}. Check your Supabase connection.`)
+        setUsers([])
+        setLoading(false)
+        return
+      }
+      setUsers((data as User[]) || [])
       setLoading(false)
-      return
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error'
+      console.error('[Supabase] users query exception:', msg)
+      setFetchError(`Connection failed: ${msg}`)
+      setUsers([])
+      setLoading(false)
     }
-    setUsers((data as User[]) || [])
-    setLoading(false)
   }, [])
 
   useEffect(() => { fetchUsers() }, [fetchUsers])
