@@ -54,16 +54,27 @@ export interface ExpenseItemInput {
   receipt_file: File | null
 }
 
-export type InvoiceStatus = 'Submitted' | 'Processed' | 'Paid'
+export type InvoiceStatus = 'submitted' | 'processed' | 'paid'
 
 export interface Invoice {
   id: string
   user_id: string
-  invoice_number: string
+  consultant_name: string
   amount: number
-  month: string
-  description: string
-  file_url?: string
+  currency: Currency
+  period_month: number
+  period_year: number
+  invoice_url: string
   status: InvoiceStatus
+  submission_date: string
+  processed_at: string | null
+  processed_by: string | null
+  paid_at: string | null
+  paid_by: string | null
+  notes: string | null
   created_at: string
+  // Joined fields
+  user?: User
+  processed_by_user?: User
+  paid_by_user?: User
 }
