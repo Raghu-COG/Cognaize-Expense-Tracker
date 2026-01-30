@@ -42,11 +42,16 @@ export default function ExpensesPage() {
 
   const fetchExpenses = useCallback(async () => {
     if (!user) return
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('expenses')
       .select('*, expense_items(*)')
       .eq('user_id', user.id)
       .order('submission_date', { ascending: false })
+    if (error) {
+      console.error('Failed to fetch expenses:', error.message)
+      setLoading(false)
+      return
+    }
     setExpenses((data as Expense[]) || [])
     setLoading(false)
   }, [user])

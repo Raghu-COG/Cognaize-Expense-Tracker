@@ -41,7 +41,12 @@ export default function AccountantExpensesPage() {
     if (statusFilter !== 'all') query = query.eq('status', statusFilter)
     if (currencyFilter !== 'all') query = query.eq('currency', currencyFilter)
 
-    const { data } = await query
+    const { data, error } = await query
+    if (error) {
+      console.error('Failed to fetch expenses:', error.message)
+      setLoading(false)
+      return
+    }
     let results = (data as Expense[]) || []
 
     if (employeeFilter) {
