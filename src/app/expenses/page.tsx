@@ -10,6 +10,7 @@ import { Receipt, Plus, Trash2, Upload, X, Eye } from 'lucide-react'
 import { useAuth } from '@/lib/auth'
 import { supabase } from '@/lib/supabase'
 import { Expense, ExpenseItem, ExpenseItemInput, Currency, ExpenseType } from '@/types'
+import { toast } from 'sonner'
 
 const CURRENCIES: Currency[] = ['INR', 'USD', 'JPY', 'AED']
 const EXPENSE_TYPES: { value: ExpenseType; label: string }[] = [
@@ -99,7 +100,7 @@ export default function ExpensesPage() {
     // Validate
     for (const item of items) {
       if (!item.date || !item.amount || item.amount <= 0) {
-        alert('Please fill in date and amount for all line items.')
+        toast.error('Please fill in date and amount for all line items.')
         return
       }
     }
@@ -148,10 +149,11 @@ export default function ExpensesPage() {
       setShowForm(false)
       setItems([emptyItem()])
       setCurrency('INR')
+      toast.success('Expense submitted successfully')
       await fetchExpenses()
     } catch (err) {
       console.error(err)
-      alert('Failed to submit expense. Please try again.')
+      toast.error('Failed to submit expense. Please try again.')
     }
     setSubmitting(false)
   }
@@ -304,7 +306,7 @@ export default function ExpensesPage() {
                           onChange={(e) => {
                             const file = e.target.files?.[0] || null
                             if (file && file.size > 5 * 1024 * 1024) {
-                              alert('File size must be under 5MB')
+                              toast.error('File size must be under 5MB')
                               return
                             }
                             updateItem(index, 'receipt_file', file)
@@ -366,7 +368,9 @@ export default function ExpensesPage() {
         <Card>
           <CardContent className="p-0">
             {loading ? (
-              <div className="text-center py-12 text-gray-400">Loading...</div>
+              <div className="flex items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cognaize-purple"></div>
+              </div>
             ) : expenses.length === 0 ? (
               <div className="text-center py-12 text-gray-400">
                 <Receipt className="mx-auto h-12 w-12 mb-4" />

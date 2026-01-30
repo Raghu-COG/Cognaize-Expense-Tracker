@@ -10,6 +10,7 @@ import { FileText, Upload, X, Eye, Download } from 'lucide-react'
 import { useAuth } from '@/lib/auth'
 import { supabase } from '@/lib/supabase'
 import { Invoice, Currency } from '@/types'
+import { toast } from 'sonner'
 
 const CURRENCIES: Currency[] = ['INR', 'USD', 'JPY', 'AED']
 const MONTHS = [
@@ -89,9 +90,9 @@ export default function InvoicesPage() {
 
   const handleSubmit = async () => {
     if (!user) return
-    if (!consultantName.trim()) { alert('Please enter consultant name.'); return }
-    if (!amount || amount <= 0) { alert('Please enter a valid amount.'); return }
-    if (!pdfFile) { alert('Please upload an invoice PDF.'); return }
+    if (!consultantName.trim()) { toast.error('Please enter consultant name.'); return }
+    if (!amount || amount <= 0) { toast.error('Please enter a valid amount.'); return }
+    if (!pdfFile) { toast.error('Please upload an invoice PDF.'); return }
 
     if (!confirm(`Submit invoice for ${MONTHS[periodMonth - 1]} ${periodYear} - ${currency} ${amount.toFixed(2)}?`)) return
 
@@ -121,10 +122,11 @@ export default function InvoicesPage() {
 
       setShowForm(false)
       resetForm()
+      toast.success('Invoice submitted successfully')
       await fetchInvoices()
     } catch (err) {
       console.error(err)
-      alert('Failed to submit invoice. Please try again.')
+      toast.error('Failed to submit invoice. Please try again.')
     }
     setSubmitting(false)
   }
@@ -273,11 +275,11 @@ export default function InvoicesPage() {
                       onChange={(e) => {
                         const file = e.target.files?.[0] || null
                         if (file && file.size > 10 * 1024 * 1024) {
-                          alert('File size must be under 10MB')
+                          toast.error('File size must be under 10MB')
                           return
                         }
                         if (file && file.type !== 'application/pdf') {
-                          alert('Only PDF files are allowed')
+                          toast.error('Only PDF files are allowed')
                           return
                         }
                         setPdfFile(file)

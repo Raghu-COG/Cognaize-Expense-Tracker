@@ -26,11 +26,13 @@ export default function Sidebar() {
   if (!user) return null
 
   const employeeNav: NavItem[] = [
+    { label: 'Dashboard', href: '/dashboard', icon: <LayoutDashboard size={20} /> },
     { label: 'My Expenses', href: '/expenses', icon: <Receipt size={20} /> },
     { label: 'My Invoices', href: '/invoices', icon: <FileText size={20} /> },
   ]
 
   const accountantNav: NavItem[] = [
+    { label: 'Dashboard', href: '/accountant', icon: <LayoutDashboard size={20} /> },
     { label: 'All Expenses', href: '/accountant/expenses', icon: <Receipt size={20} /> },
     { label: 'All Invoices', href: '/accountant/invoices', icon: <FileText size={20} /> },
   ]
