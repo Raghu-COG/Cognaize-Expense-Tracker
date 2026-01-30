@@ -6,10 +6,11 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { FileText, X, Eye, Download, Check, ArrowUpDown } from 'lucide-react'
+import { FileText, X, Eye, Download, Check, ArrowUpDown, Trash2, Pencil, Save } from 'lucide-react'
 import { useAuth } from '@/lib/auth'
 import { supabase } from '@/lib/supabase'
 import { Invoice, Currency } from '@/types'
+import { toast } from 'sonner'
 
 const CURRENCIES: Currency[] = ['INR', 'USD', 'JPY', 'AED']
 const MONTHS = [
@@ -25,12 +26,17 @@ const STATUS_BADGE: Record<string, string> = {
 
 export default function AccountantInvoicesPage() {
   const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [loading, setLoading] = useState(true)
   const [showDetail, setShowDetail] = useState<Invoice | null>(null)
   const [notes, setNotes] = useState('')
   const [processing, setProcessing] = useState(false)
   const [fetchError, setFetchError] = useState<string | null>(null)
+
+  // Admin edit state
+  const [editing, setEditing] = useState(false)
+  const [editValues, setEditValues] = useState({ amount: '', period_month: 1, period_year: 2025 })
 
   // Filters
   const [statusFilter, setStatusFilter] = useState<string>('all')
@@ -69,7 +75,6 @@ export default function AccountantInvoicesPage() {
       )
     }
 
-    // Sort
     results.sort((a, b) => {
       let cmp = 0
       if (sortField === 'date') cmp = new Date(a.submission_date).getTime() - new Date(b.submission_date).getTime()
@@ -84,11 +89,9 @@ export default function AccountantInvoicesPage() {
 
   useEffect(() => { fetchInvoices() }, [fetchInvoices])
 
-  // Get unique years from invoices for the year filter
   const availableYears = [...new Set(invoices.map(inv => inv.period_year))].sort((a, b) => b - a)
 
   const handleViewDetail = async (invoice: Invoice) => {
-    // Generate signed URL for PDF
     let signedUrl = invoice.invoice_url
     if (invoice.invoice_url) {
       const { data } = await supabase.storage
@@ -97,7 +100,6 @@ export default function AccountantInvoicesPage() {
       if (data?.signedUrl) signedUrl = data.signedUrl
     }
 
-    // Fetch processed_by / paid_by user names
     let processedByUser = null
     let paidByUser = null
     if (invoice.processed_by) {
@@ -116,40 +118,92 @@ export default function AccountantInvoicesPage() {
       paid_by_user: paidByUser,
     })
     setNotes(invoice.notes || '')
+    setEditing(false)
   }
 
-  const handleMarkProcessed = async () => {
+  const handleStatusChange = async (newStatus: 'submitted' | 'processed' | 'paid') => {
     if (!showDetail || !user) return
     setProcessing(true)
-    await supabase
-      .from('invoices')
-      .update({
-        status: 'processed',
-        processed_at: new Date().toISOString(),
-        processed_by: user.id,
-        notes: notes || null,
-      })
-      .eq('id', showDetail.id)
+
+    const update: Record<string, unknown> = {
+      status: newStatus,
+      notes: notes || null,
+    }
+
+    if (newStatus === 'processed') {
+      update.processed_at = new Date().toISOString()
+      update.processed_by = user.id
+    } else if (newStatus === 'paid') {
+      update.paid_at = new Date().toISOString()
+      update.paid_by = user.id
+    } else if (newStatus === 'submitted') {
+      update.processed_at = null
+      update.processed_by = null
+      update.paid_at = null
+      update.paid_by = null
+    }
+
+    const { error } = await supabase.from('invoices').update(update).eq('id', showDetail.id)
+    if (error) {
+      toast.error('Failed to update status')
+    } else {
+      toast.success(`Invoice marked as ${newStatus}`)
+    }
+
     setShowDetail(null)
     setProcessing(false)
     await fetchInvoices()
   }
 
-  const handleMarkPaid = async () => {
-    if (!showDetail || !user) return
+  const handleDeleteInvoice = async () => {
+    if (!showDetail) return
+    if (!confirm('Are you sure you want to delete this invoice? This action cannot be undone.')) return
+
     setProcessing(true)
-    await supabase
-      .from('invoices')
-      .update({
-        status: 'paid',
-        paid_at: new Date().toISOString(),
-        paid_by: user.id,
-        notes: notes || null,
-      })
-      .eq('id', showDetail.id)
+    const { error } = await supabase.from('invoices').delete().eq('id', showDetail.id)
+    if (error) {
+      toast.error('Failed to delete invoice')
+    } else {
+      toast.success('Invoice deleted successfully')
+    }
     setShowDetail(null)
     setProcessing(false)
     await fetchInvoices()
+  }
+
+  const startEditing = () => {
+    if (!showDetail) return
+    setEditing(true)
+    setEditValues({
+      amount: String(showDetail.amount),
+      period_month: showDetail.period_month,
+      period_year: showDetail.period_year,
+    })
+  }
+
+  const handleSaveEdit = async () => {
+    if (!showDetail) return
+    const newAmount = parseFloat(editValues.amount)
+    if (isNaN(newAmount) || newAmount <= 0) {
+      toast.error('Please enter a valid amount')
+      return
+    }
+
+    const { error } = await supabase.from('invoices').update({
+      amount: newAmount,
+      period_month: editValues.period_month,
+      period_year: editValues.period_year,
+    }).eq('id', showDetail.id)
+
+    if (error) {
+      toast.error('Failed to update invoice')
+      return
+    }
+
+    toast.success('Invoice updated')
+    setEditing(false)
+    handleViewDetail({ ...showDetail, amount: newAmount, period_month: editValues.period_month, period_year: editValues.period_year })
+    fetchInvoices()
   }
 
   const toggleSort = (field: 'date' | 'amount' | 'period') => {
@@ -169,9 +223,21 @@ export default function AccountantInvoicesPage() {
                 Submitted by {showDetail.consultant_name} on {new Date(showDetail.submission_date).toLocaleDateString()}
               </p>
             </div>
-            <Button variant="outline" onClick={() => setShowDetail(null)}>
-              <X className="mr-2 h-4 w-4" /> Back
-            </Button>
+            <div className="flex gap-2">
+              {isAdmin && !editing && (
+                <>
+                  <Button variant="outline" onClick={startEditing}>
+                    <Pencil className="mr-2 h-4 w-4" /> Edit
+                  </Button>
+                  <Button variant="destructive" onClick={handleDeleteInvoice} disabled={processing}>
+                    <Trash2 className="mr-2 h-4 w-4" /> Delete
+                  </Button>
+                </>
+              )}
+              <Button variant="outline" onClick={() => setShowDetail(null)}>
+                <X className="mr-2 h-4 w-4" /> Back
+              </Button>
+            </div>
           </div>
 
           <Card>
@@ -186,18 +252,37 @@ export default function AccountantInvoicesPage() {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4 text-sm">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                 <div>
                   <span className="text-gray-500">Consultant Name</span>
                   <p className="font-medium">{showDetail.consultant_name}</p>
                 </div>
                 <div>
                   <span className="text-gray-500">Period</span>
-                  <p className="font-medium">{MONTHS[showDetail.period_month - 1]} {showDetail.period_year}</p>
+                  {editing ? (
+                    <div className="flex gap-2 mt-1">
+                      <select value={editValues.period_month}
+                        onChange={(e) => setEditValues({ ...editValues, period_month: parseInt(e.target.value) })}
+                        className="border rounded px-2 py-1 text-sm">
+                        {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+                      </select>
+                      <Input value={editValues.period_year} type="number"
+                        onChange={(e) => setEditValues({ ...editValues, period_year: parseInt(e.target.value) })}
+                        className="h-8 w-20 text-sm" />
+                    </div>
+                  ) : (
+                    <p className="font-medium">{MONTHS[showDetail.period_month - 1]} {showDetail.period_year}</p>
+                  )}
                 </div>
                 <div>
                   <span className="text-gray-500">Amount</span>
-                  <p className="font-medium">{showDetail.currency} {Number(showDetail.amount).toFixed(2)}</p>
+                  {editing ? (
+                    <Input value={editValues.amount} type="number" step="0.01"
+                      onChange={(e) => setEditValues({ ...editValues, amount: e.target.value })}
+                      className="h-8 w-32 text-sm mt-1" />
+                  ) : (
+                    <p className="font-medium">{showDetail.currency} {Number(showDetail.amount).toFixed(2)}</p>
+                  )}
                 </div>
                 <div>
                   <span className="text-gray-500">Submitted</span>
@@ -205,7 +290,15 @@ export default function AccountantInvoicesPage() {
                 </div>
               </div>
 
-              {/* PDF buttons */}
+              {editing && (
+                <div className="flex gap-2">
+                  <Button onClick={handleSaveEdit}>
+                    <Save className="mr-2 h-4 w-4" /> Save Changes
+                  </Button>
+                  <Button variant="outline" onClick={() => setEditing(false)}>Cancel</Button>
+                </div>
+              )}
+
               {showDetail.invoice_url && (
                 <div className="flex gap-3">
                   <a href={showDetail.invoice_url} target="_blank" rel="noopener noreferrer">
@@ -221,7 +314,6 @@ export default function AccountantInvoicesPage() {
                 </div>
               )}
 
-              {/* Processing info */}
               {showDetail.processed_at && (
                 <div className="text-sm text-gray-500">
                   Processed by {showDetail.processed_by_user?.name || 'Unknown'} on {new Date(showDetail.processed_at).toLocaleString()}
@@ -233,7 +325,6 @@ export default function AccountantInvoicesPage() {
                 </div>
               )}
 
-              {/* Notes */}
               <div>
                 <Label>Notes (optional)</Label>
                 <textarea
@@ -242,23 +333,45 @@ export default function AccountantInvoicesPage() {
                   className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                   rows={2}
                   placeholder="Add notes for this invoice..."
-                  disabled={showDetail.status === 'paid'}
+                  disabled={!isAdmin && showDetail.status === 'paid'}
                 />
               </div>
 
-              {/* Action buttons */}
-              <div className="flex gap-3 pt-2">
-                {showDetail.status === 'submitted' && (
-                  <Button onClick={handleMarkProcessed} disabled={processing}>
-                    <Check className="mr-2 h-4 w-4" />
-                    {processing ? 'Processing...' : 'Mark as Processed'}
-                  </Button>
-                )}
-                {showDetail.status === 'processed' && (
-                  <Button onClick={handleMarkPaid} disabled={processing}>
-                    <Check className="mr-2 h-4 w-4" />
-                    {processing ? 'Processing...' : 'Mark as Paid'}
-                  </Button>
+              <div className="flex flex-wrap gap-3 pt-2">
+                {isAdmin ? (
+                  <>
+                    {showDetail.status !== 'submitted' && (
+                      <Button variant="outline" onClick={() => handleStatusChange('submitted')} disabled={processing}>
+                        Revert to Submitted
+                      </Button>
+                    )}
+                    {showDetail.status !== 'processed' && (
+                      <Button onClick={() => handleStatusChange('processed')} disabled={processing}>
+                        <Check className="mr-2 h-4 w-4" />
+                        {showDetail.status === 'paid' ? 'Revert to Processed' : 'Mark as Processed'}
+                      </Button>
+                    )}
+                    {showDetail.status !== 'paid' && (
+                      <Button onClick={() => handleStatusChange('paid')} disabled={processing}>
+                        <Check className="mr-2 h-4 w-4" /> Mark as Paid
+                      </Button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {showDetail.status === 'submitted' && (
+                      <Button onClick={() => handleStatusChange('processed')} disabled={processing}>
+                        <Check className="mr-2 h-4 w-4" />
+                        {processing ? 'Processing...' : 'Mark as Processed'}
+                      </Button>
+                    )}
+                    {showDetail.status === 'processed' && (
+                      <Button onClick={() => handleStatusChange('paid')} disabled={processing}>
+                        <Check className="mr-2 h-4 w-4" />
+                        {processing ? 'Processing...' : 'Mark as Paid'}
+                      </Button>
+                    )}
+                  </>
                 )}
               </div>
             </CardContent>
@@ -332,47 +445,52 @@ export default function AccountantInvoicesPage() {
         <Card>
           <CardContent className="p-0">
             {loading ? (
-              <div className="text-center py-12 text-gray-400">Loading...</div>
+              <div className="flex items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cognaize-purple"></div>
+              </div>
             ) : invoices.length === 0 ? (
               <div className="text-center py-12 text-gray-400">
                 <FileText className="mx-auto h-12 w-12 mb-4" />
-                <p>No invoice submissions found</p>
+                <p className="font-medium">No invoice submissions found</p>
+                <p className="text-sm mt-1">Invoices will appear here once consultants submit them</p>
               </div>
             ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-gray-500 bg-gray-50">
-                    <th className="px-4 py-3">Consultant Name</th>
-                    <th className="px-4 py-3 cursor-pointer select-none" onClick={() => toggleSort('period')}>
-                      <span className="inline-flex items-center gap-1">Period <ArrowUpDown size={12} /></span>
-                    </th>
-                    <th className="px-4 py-3 cursor-pointer select-none" onClick={() => toggleSort('amount')}>
-                      <span className="inline-flex items-center gap-1">Amount <ArrowUpDown size={12} /></span>
-                    </th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3 cursor-pointer select-none" onClick={() => toggleSort('date')}>
-                      <span className="inline-flex items-center gap-1">Submitted <ArrowUpDown size={12} /></span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {invoices.map((inv) => (
-                    <tr key={inv.id}
-                      onClick={() => handleViewDetail(inv)}
-                      className="border-b hover:bg-gray-50 cursor-pointer">
-                      <td className="px-4 py-3">{inv.consultant_name}</td>
-                      <td className="px-4 py-3">{MONTHS[inv.period_month - 1]} {inv.period_year}</td>
-                      <td className="px-4 py-3">{inv.currency} {Number(inv.amount).toFixed(2)}</td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium capitalize ${STATUS_BADGE[inv.status]}`}>
-                          {inv.status}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">{new Date(inv.submission_date).toLocaleDateString()}</td>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-gray-500 bg-gray-50">
+                      <th className="px-4 py-3">Consultant Name</th>
+                      <th className="px-4 py-3 cursor-pointer select-none" onClick={() => toggleSort('period')}>
+                        <span className="inline-flex items-center gap-1">Period <ArrowUpDown size={12} /></span>
+                      </th>
+                      <th className="px-4 py-3 cursor-pointer select-none" onClick={() => toggleSort('amount')}>
+                        <span className="inline-flex items-center gap-1">Amount <ArrowUpDown size={12} /></span>
+                      </th>
+                      <th className="px-4 py-3">Status</th>
+                      <th className="px-4 py-3 cursor-pointer select-none" onClick={() => toggleSort('date')}>
+                        <span className="inline-flex items-center gap-1">Submitted <ArrowUpDown size={12} /></span>
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {invoices.map((inv) => (
+                      <tr key={inv.id}
+                        onClick={() => handleViewDetail(inv)}
+                        className="border-b hover:bg-gray-50 cursor-pointer">
+                        <td className="px-4 py-3">{inv.consultant_name}</td>
+                        <td className="px-4 py-3">{MONTHS[inv.period_month - 1]} {inv.period_year}</td>
+                        <td className="px-4 py-3">{inv.currency} {Number(inv.amount).toFixed(2)}</td>
+                        <td className="px-4 py-3">
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium capitalize ${STATUS_BADGE[inv.status]}`}>
+                            {inv.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">{new Date(inv.submission_date).toLocaleDateString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </CardContent>
         </Card>

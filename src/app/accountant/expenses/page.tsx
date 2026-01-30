@@ -6,10 +6,11 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Receipt, X, Eye, Check, ArrowUpDown } from 'lucide-react'
+import { Receipt, X, Eye, Check, ArrowUpDown, Trash2, Pencil, Save } from 'lucide-react'
 import { useAuth } from '@/lib/auth'
 import { supabase } from '@/lib/supabase'
-import { Expense, ExpenseItem } from '@/types'
+import { Expense, ExpenseItem, ExpenseType } from '@/types'
+import { toast } from 'sonner'
 
 const STATUS_BADGE: Record<string, string> = {
   submitted: 'bg-yellow-100 text-yellow-800',
@@ -17,13 +18,20 @@ const STATUS_BADGE: Record<string, string> = {
   paid: 'bg-green-100 text-green-800',
 }
 
+const EXPENSE_TYPES: ExpenseType[] = ['travel', 'food', 'hotel', 'software', 'others']
+
 export default function AccountantExpensesPage() {
   const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [loading, setLoading] = useState(true)
   const [showDetail, setShowDetail] = useState<Expense | null>(null)
   const [notes, setNotes] = useState('')
   const [processing, setProcessing] = useState(false)
+
+  // Admin edit state
+  const [editingItem, setEditingItem] = useState<string | null>(null)
+  const [editValues, setEditValues] = useState<{ amount: string; expense_type: ExpenseType; description: string }>({ amount: '', expense_type: 'others', description: '' })
 
   // Filters
   const [statusFilter, setStatusFilter] = useState<string>('all')
@@ -59,7 +67,6 @@ export default function AccountantExpensesPage() {
       )
     }
 
-    // Sort
     results.sort((a, b) => {
       let cmp = 0
       if (sortField === 'date') cmp = new Date(a.submission_date).getTime() - new Date(b.submission_date).getTime()
@@ -93,7 +100,6 @@ export default function AccountantExpensesPage() {
       })
     )
 
-    // Fetch processed_by / paid_by user names
     let processedByUser = null
     let paidByUser = null
     if (expense.processed_by) {
@@ -107,40 +113,119 @@ export default function AccountantExpensesPage() {
 
     setShowDetail({ ...expense, expense_items: itemsWithUrls, processed_by_user: processedByUser, paid_by_user: paidByUser })
     setNotes(expense.notes || '')
+    setEditingItem(null)
   }
 
-  const handleMarkProcessed = async () => {
+  const handleStatusChange = async (newStatus: 'submitted' | 'processed' | 'paid') => {
     if (!showDetail || !user) return
     setProcessing(true)
-    await supabase
-      .from('expenses')
-      .update({
-        status: 'processed',
-        processed_at: new Date().toISOString(),
-        processed_by: user.id,
-        notes: notes || null,
-      })
-      .eq('id', showDetail.id)
+
+    const update: Record<string, unknown> = {
+      status: newStatus,
+      notes: notes || null,
+    }
+
+    if (newStatus === 'processed') {
+      update.processed_at = new Date().toISOString()
+      update.processed_by = user.id
+    } else if (newStatus === 'paid') {
+      update.paid_at = new Date().toISOString()
+      update.paid_by = user.id
+    } else if (newStatus === 'submitted') {
+      // Revert
+      update.processed_at = null
+      update.processed_by = null
+      update.paid_at = null
+      update.paid_by = null
+    }
+
+    const { error } = await supabase.from('expenses').update(update).eq('id', showDetail.id)
+    if (error) {
+      toast.error('Failed to update status')
+    } else {
+      toast.success(`Expense marked as ${newStatus}`)
+    }
+
     setShowDetail(null)
     setProcessing(false)
     await fetchExpenses()
   }
 
-  const handleMarkPaid = async () => {
-    if (!showDetail || !user) return
+  const handleDeleteExpense = async () => {
+    if (!showDetail) return
+    if (!confirm('Are you sure you want to delete this expense submission? This action cannot be undone.')) return
+
     setProcessing(true)
-    await supabase
-      .from('expenses')
-      .update({
-        status: 'paid',
-        paid_at: new Date().toISOString(),
-        paid_by: user.id,
-        notes: notes || null,
-      })
-      .eq('id', showDetail.id)
+    const { error } = await supabase.from('expenses').delete().eq('id', showDetail.id)
+    if (error) {
+      toast.error('Failed to delete expense')
+    } else {
+      toast.success('Expense deleted successfully')
+    }
     setShowDetail(null)
     setProcessing(false)
     await fetchExpenses()
+  }
+
+  const handleDeleteItem = async (itemId: string) => {
+    if (!showDetail) return
+    if (!confirm('Are you sure you want to delete this line item?')) return
+
+    const { error } = await supabase.from('expense_items').delete().eq('id', itemId)
+    if (error) {
+      toast.error('Failed to delete item')
+      return
+    }
+
+    // Recalculate total
+    const remaining = (showDetail.expense_items || []).filter(i => i.id !== itemId)
+    const newTotal = remaining.reduce((sum, i) => sum + Number(i.amount), 0)
+    await supabase.from('expenses').update({ total_amount: newTotal }).eq('id', showDetail.id)
+
+    toast.success('Item deleted')
+    handleViewDetail({ ...showDetail, expense_items: remaining, total_amount: newTotal })
+    fetchExpenses()
+  }
+
+  const startEditItem = (item: ExpenseItem) => {
+    setEditingItem(item.id)
+    setEditValues({
+      amount: String(item.amount),
+      expense_type: item.expense_type,
+      description: item.description || '',
+    })
+  }
+
+  const handleSaveItem = async (itemId: string) => {
+    if (!showDetail) return
+    const newAmount = parseFloat(editValues.amount)
+    if (isNaN(newAmount) || newAmount <= 0) {
+      toast.error('Please enter a valid amount')
+      return
+    }
+
+    const { error } = await supabase.from('expense_items').update({
+      amount: newAmount,
+      expense_type: editValues.expense_type,
+      description: editValues.description || null,
+    }).eq('id', itemId)
+
+    if (error) {
+      toast.error('Failed to update item')
+      return
+    }
+
+    // Recalculate total
+    const updated = (showDetail.expense_items || []).map(i =>
+      i.id === itemId ? { ...i, amount: newAmount, expense_type: editValues.expense_type, description: editValues.description } : i
+    )
+    const newTotal = updated.reduce((sum, i) => sum + Number(i.amount), 0)
+    await supabase.from('expenses').update({ total_amount: newTotal }).eq('id', showDetail.id)
+
+    toast.success('Item updated')
+    setEditingItem(null)
+    handleViewDetail({ ...showDetail })
+    fetchExpenses()
   }
 
   const toggleSort = (field: 'date' | 'amount' | 'status') => {
@@ -160,9 +245,16 @@ export default function AccountantExpensesPage() {
                 Submitted by {showDetail.user?.name || 'Unknown'} on {new Date(showDetail.submission_date).toLocaleDateString()}
               </p>
             </div>
-            <Button variant="outline" onClick={() => setShowDetail(null)}>
-              <X className="mr-2 h-4 w-4" /> Back
-            </Button>
+            <div className="flex gap-2">
+              {isAdmin && (
+                <Button variant="destructive" onClick={handleDeleteExpense} disabled={processing}>
+                  <Trash2 className="mr-2 h-4 w-4" /> Delete
+                </Button>
+              )}
+              <Button variant="outline" onClick={() => setShowDetail(null)}>
+                <X className="mr-2 h-4 w-4" /> Back
+              </Button>
+            </div>
           </div>
 
           <Card>
@@ -177,37 +269,90 @@ export default function AccountantExpensesPage() {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-gray-500">
-                    <th className="pb-2">Date</th>
-                    <th className="pb-2">Type</th>
-                    <th className="pb-2">Description</th>
-                    <th className="pb-2 text-right">Amount</th>
-                    <th className="pb-2">Receipt</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {showDetail.expense_items?.map((item) => (
-                    <tr key={item.id} className="border-b">
-                      <td className="py-2">{new Date(item.date).toLocaleDateString()}</td>
-                      <td className="py-2 capitalize">{item.expense_type}</td>
-                      <td className="py-2">{item.description || '-'}</td>
-                      <td className="py-2 text-right">{Number(item.amount).toFixed(2)}</td>
-                      <td className="py-2">
-                        {item.receipt_url ? (
-                          <a href={item.receipt_url} target="_blank" rel="noopener noreferrer"
-                            className="text-cognaize-purple hover:underline inline-flex items-center gap-1">
-                            <Eye size={14} /> View
-                          </a>
-                        ) : '-'}
-                      </td>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-gray-500">
+                      <th className="pb-2">Date</th>
+                      <th className="pb-2">Type</th>
+                      <th className="pb-2">Description</th>
+                      <th className="pb-2 text-right">Amount</th>
+                      <th className="pb-2">Receipt</th>
+                      {isAdmin && <th className="pb-2">Actions</th>}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {showDetail.expense_items?.map((item) => (
+                      <tr key={item.id} className="border-b">
+                        <td className="py-2">{new Date(item.date).toLocaleDateString()}</td>
+                        <td className="py-2">
+                          {editingItem === item.id ? (
+                            <select value={editValues.expense_type}
+                              onChange={(e) => setEditValues({ ...editValues, expense_type: e.target.value as ExpenseType })}
+                              className="border rounded px-1 py-0.5 text-sm w-24">
+                              {EXPENSE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                            </select>
+                          ) : (
+                            <span className="capitalize">{item.expense_type}</span>
+                          )}
+                        </td>
+                        <td className="py-2">
+                          {editingItem === item.id ? (
+                            <Input value={editValues.description}
+                              onChange={(e) => setEditValues({ ...editValues, description: e.target.value })}
+                              className="h-7 text-sm w-32" />
+                          ) : (
+                            item.description || '-'
+                          )}
+                        </td>
+                        <td className="py-2 text-right">
+                          {editingItem === item.id ? (
+                            <Input value={editValues.amount} type="number" step="0.01"
+                              onChange={(e) => setEditValues({ ...editValues, amount: e.target.value })}
+                              className="h-7 text-sm w-24 text-right" />
+                          ) : (
+                            Number(item.amount).toFixed(2)
+                          )}
+                        </td>
+                        <td className="py-2">
+                          {item.receipt_url ? (
+                            <a href={item.receipt_url} target="_blank" rel="noopener noreferrer"
+                              className="text-cognaize-purple hover:underline inline-flex items-center gap-1">
+                              <Eye size={14} /> View
+                            </a>
+                          ) : '-'}
+                        </td>
+                        {isAdmin && (
+                          <td className="py-2">
+                            <div className="flex gap-1">
+                              {editingItem === item.id ? (
+                                <>
+                                  <Button size="sm" variant="ghost" onClick={() => handleSaveItem(item.id)}>
+                                    <Save size={14} />
+                                  </Button>
+                                  <Button size="sm" variant="ghost" onClick={() => setEditingItem(null)}>
+                                    <X size={14} />
+                                  </Button>
+                                </>
+                              ) : (
+                                <>
+                                  <Button size="sm" variant="ghost" onClick={() => startEditItem(item)}>
+                                    <Pencil size={14} />
+                                  </Button>
+                                  <Button size="sm" variant="ghost" onClick={() => handleDeleteItem(item.id)}>
+                                    <Trash2 size={14} className="text-red-500" />
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
 
-              {/* Processing info */}
               {showDetail.processed_at && (
                 <div className="text-sm text-gray-500">
                   Processed by {showDetail.processed_by_user?.name || 'Unknown'} on {new Date(showDetail.processed_at).toLocaleString()}
@@ -219,7 +364,6 @@ export default function AccountantExpensesPage() {
                 </div>
               )}
 
-              {/* Notes */}
               <div>
                 <Label>Notes (optional)</Label>
                 <textarea
@@ -228,23 +372,45 @@ export default function AccountantExpensesPage() {
                   className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                   rows={2}
                   placeholder="Add notes for this expense..."
-                  disabled={showDetail.status === 'paid'}
+                  disabled={!isAdmin && showDetail.status === 'paid'}
                 />
               </div>
 
-              {/* Action buttons */}
-              <div className="flex gap-3 pt-2">
-                {showDetail.status === 'submitted' && (
-                  <Button onClick={handleMarkProcessed} disabled={processing}>
-                    <Check className="mr-2 h-4 w-4" />
-                    {processing ? 'Processing...' : 'Mark as Processed'}
-                  </Button>
-                )}
-                {showDetail.status === 'processed' && (
-                  <Button onClick={handleMarkPaid} disabled={processing}>
-                    <Check className="mr-2 h-4 w-4" />
-                    {processing ? 'Processing...' : 'Mark as Paid'}
-                  </Button>
+              <div className="flex flex-wrap gap-3 pt-2">
+                {isAdmin ? (
+                  <>
+                    {showDetail.status !== 'submitted' && (
+                      <Button variant="outline" onClick={() => handleStatusChange('submitted')} disabled={processing}>
+                        Revert to Submitted
+                      </Button>
+                    )}
+                    {showDetail.status !== 'processed' && (
+                      <Button onClick={() => handleStatusChange('processed')} disabled={processing}>
+                        <Check className="mr-2 h-4 w-4" />
+                        {showDetail.status === 'paid' ? 'Revert to Processed' : 'Mark as Processed'}
+                      </Button>
+                    )}
+                    {showDetail.status !== 'paid' && (
+                      <Button onClick={() => handleStatusChange('paid')} disabled={processing}>
+                        <Check className="mr-2 h-4 w-4" /> Mark as Paid
+                      </Button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {showDetail.status === 'submitted' && (
+                      <Button onClick={() => handleStatusChange('processed')} disabled={processing}>
+                        <Check className="mr-2 h-4 w-4" />
+                        {processing ? 'Processing...' : 'Mark as Processed'}
+                      </Button>
+                    )}
+                    {showDetail.status === 'processed' && (
+                      <Button onClick={() => handleStatusChange('paid')} disabled={processing}>
+                        <Check className="mr-2 h-4 w-4" />
+                        {processing ? 'Processing...' : 'Mark as Paid'}
+                      </Button>
+                    )}
+                  </>
                 )}
               </div>
             </CardContent>
@@ -305,47 +471,52 @@ export default function AccountantExpensesPage() {
         <Card>
           <CardContent className="p-0">
             {loading ? (
-              <div className="text-center py-12 text-gray-400">Loading...</div>
+              <div className="flex items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cognaize-purple"></div>
+              </div>
             ) : expenses.length === 0 ? (
               <div className="text-center py-12 text-gray-400">
                 <Receipt className="mx-auto h-12 w-12 mb-4" />
-                <p>No expense submissions found</p>
+                <p className="font-medium">No expense submissions found</p>
+                <p className="text-sm mt-1">Expenses will appear here once employees submit them</p>
               </div>
             ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-gray-500 bg-gray-50">
-                    <th className="px-4 py-3">Submitted By</th>
-                    <th className="px-4 py-3 cursor-pointer select-none" onClick={() => toggleSort('date')}>
-                      <span className="inline-flex items-center gap-1">Date <ArrowUpDown size={12} /></span>
-                    </th>
-                    <th className="px-4 py-3 cursor-pointer select-none" onClick={() => toggleSort('amount')}>
-                      <span className="inline-flex items-center gap-1">Total Amount <ArrowUpDown size={12} /></span>
-                    </th>
-                    <th className="px-4 py-3"># Items</th>
-                    <th className="px-4 py-3 cursor-pointer select-none" onClick={() => toggleSort('status')}>
-                      <span className="inline-flex items-center gap-1">Status <ArrowUpDown size={12} /></span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {expenses.map((exp) => (
-                    <tr key={exp.id}
-                      onClick={() => handleViewDetail(exp)}
-                      className="border-b hover:bg-gray-50 cursor-pointer">
-                      <td className="px-4 py-3">{exp.user?.name || 'Unknown'}</td>
-                      <td className="px-4 py-3">{new Date(exp.submission_date).toLocaleDateString()}</td>
-                      <td className="px-4 py-3">{exp.currency} {Number(exp.total_amount).toFixed(2)}</td>
-                      <td className="px-4 py-3">{exp.expense_items?.length || 0}</td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium capitalize ${STATUS_BADGE[exp.status]}`}>
-                          {exp.status}
-                        </span>
-                      </td>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-gray-500 bg-gray-50">
+                      <th className="px-4 py-3">Submitted By</th>
+                      <th className="px-4 py-3 cursor-pointer select-none" onClick={() => toggleSort('date')}>
+                        <span className="inline-flex items-center gap-1">Date <ArrowUpDown size={12} /></span>
+                      </th>
+                      <th className="px-4 py-3 cursor-pointer select-none" onClick={() => toggleSort('amount')}>
+                        <span className="inline-flex items-center gap-1">Total Amount <ArrowUpDown size={12} /></span>
+                      </th>
+                      <th className="px-4 py-3"># Items</th>
+                      <th className="px-4 py-3 cursor-pointer select-none" onClick={() => toggleSort('status')}>
+                        <span className="inline-flex items-center gap-1">Status <ArrowUpDown size={12} /></span>
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {expenses.map((exp) => (
+                      <tr key={exp.id}
+                        onClick={() => handleViewDetail(exp)}
+                        className="border-b hover:bg-gray-50 cursor-pointer">
+                        <td className="px-4 py-3">{exp.user?.name || 'Unknown'}</td>
+                        <td className="px-4 py-3">{new Date(exp.submission_date).toLocaleDateString()}</td>
+                        <td className="px-4 py-3">{exp.currency} {Number(exp.total_amount).toFixed(2)}</td>
+                        <td className="px-4 py-3">{exp.expense_items?.length || 0}</td>
+                        <td className="px-4 py-3">
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium capitalize ${STATUS_BADGE[exp.status]}`}>
+                            {exp.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </CardContent>
         </Card>

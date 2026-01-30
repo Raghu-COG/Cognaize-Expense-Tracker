@@ -12,8 +12,8 @@ export default function Home() {
     if (!loading) {
       if (user) {
         if (user.role === 'admin') router.push('/admin')
-        else if (user.role === 'accountant') router.push('/accountant/expenses')
-        else router.push('/expenses')
+        else if (user.role === 'accountant') router.push('/accountant')
+        else router.push('/dashboard')
       } else {
         router.push('/login')
       }
