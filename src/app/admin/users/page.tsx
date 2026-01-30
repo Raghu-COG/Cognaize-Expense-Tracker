@@ -28,14 +28,17 @@ export default function AdminUsersPage() {
   const [formActive, setFormActive] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState('')
+  const [fetchError, setFetchError] = useState<string | null>(null)
 
   const fetchUsers = useCallback(async () => {
+    setFetchError(null)
     const { data, error } = await supabase
       .from('users')
       .select('*')
       .order('created_at', { ascending: true })
     if (error) {
       console.error('Failed to fetch users:', error.message)
+      setFetchError(`Failed to load users: ${error.message}. Check your Supabase connection.`)
       setLoading(false)
       return
     }
@@ -174,6 +177,16 @@ export default function AdminUsersPage() {
                 </div>
               </CardContent>
             </Card>
+          </div>
+        )}
+
+        {fetchError && (
+          <div className="rounded-md bg-red-50 border border-red-200 p-4">
+            <p className="text-sm text-red-800 font-medium">Supabase Connection Error</p>
+            <p className="text-sm text-red-600 mt-1">{fetchError}</p>
+            <Button variant="outline" size="sm" className="mt-2" onClick={() => { setLoading(true); fetchUsers() }}>
+              Retry
+            </Button>
           </div>
         )}
 

@@ -29,7 +29,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .eq('id', parsed.id)
           .eq('is_active', true)
           .single()
-          .then(({ data }) => {
+          .then(({ data, error }) => {
+            if (error) {
+              console.error('[Supabase] Failed to re-validate user session:', error.message)
+            }
             if (data) {
               setUser(data as User)
               localStorage.setItem('cognaize_user', JSON.stringify(data))
