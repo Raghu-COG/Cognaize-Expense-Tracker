@@ -31,8 +31,10 @@ export default function AccountantExpensesPage() {
   const [currencyFilter, setCurrencyFilter] = useState<string>('all')
   const [sortField, setSortField] = useState<'date' | 'amount' | 'status'>('date')
   const [sortAsc, setSortAsc] = useState(false)
+  const [fetchError, setFetchError] = useState<string | null>(null)
 
   const fetchExpenses = useCallback(async () => {
+    setFetchError(null)
     let query = supabase
       .from('expenses')
       .select('*, user:users!expenses_user_id_fkey(*), expense_items(*)')
@@ -44,6 +46,7 @@ export default function AccountantExpensesPage() {
     const { data, error } = await query
     if (error) {
       console.error('Failed to fetch expenses:', error.message)
+      setFetchError(`Failed to load expenses: ${error.message}. Check your Supabase connection.`)
       setLoading(false)
       return
     }
@@ -288,6 +291,16 @@ export default function AccountantExpensesPage() {
             </select>
           </div>
         </div>
+
+        {fetchError && (
+          <div className="rounded-md bg-red-50 border border-red-200 p-4">
+            <p className="text-sm text-red-800 font-medium">Supabase Connection Error</p>
+            <p className="text-sm text-red-600 mt-1">{fetchError}</p>
+            <Button variant="outline" size="sm" className="mt-2" onClick={() => { setLoading(true); fetchExpenses() }}>
+              Retry
+            </Button>
+          </div>
+        )}
 
         <Card>
           <CardContent className="p-0">

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
+import { testSupabaseConnection } from '@/lib/supabase'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -11,6 +12,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [error, setError] = useState('')
+  const [connError, setConnError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const { login, user, loading } = useAuth()
   const router = useRouter()
@@ -22,6 +24,12 @@ export default function LoginPage() {
       else router.push('/expenses')
     }
   }, [user, loading, router])
+
+  useEffect(() => {
+    testSupabaseConnection().then(err => {
+      if (err) setConnError(err)
+    })
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -53,6 +61,13 @@ export default function LoginPage() {
           <h1 className="text-2xl font-bold text-cognaize-dark">Cognaize Systems</h1>
           <p className="text-gray-500 mt-1">Expense & Invoice Portal</p>
         </div>
+
+        {connError && (
+          <div className="rounded-md bg-red-50 border border-red-200 p-4 mb-4">
+            <p className="text-sm text-red-800 font-medium">Supabase Connection Error</p>
+            <p className="text-sm text-red-600 mt-1">{connError}</p>
+          </div>
+        )}
 
         <Card>
           <CardHeader>
