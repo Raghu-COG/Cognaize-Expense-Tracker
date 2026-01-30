@@ -30,10 +30,15 @@ export default function AdminUsersPage() {
   const [formError, setFormError] = useState('')
 
   const fetchUsers = useCallback(async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('users')
       .select('*')
       .order('created_at', { ascending: true })
+    if (error) {
+      console.error('Failed to fetch users:', error.message)
+      setLoading(false)
+      return
+    }
     setUsers((data as User[]) || [])
     setLoading(false)
   }, [])
@@ -63,11 +68,13 @@ export default function AdminUsersPage() {
   const handleSave = async () => {
     setFormError('')
     if (!formName.trim()) { setFormError('Name is required'); return }
+    setSubmitting(true)
 
     if (editUser) {
       // Prevent deactivating main admin
       if (editUser.email === 'admin@cognaizesys.com' && !formActive) {
         setFormError('Cannot deactivate the primary admin account.')
+        setSubmitting(false)
         return
       }
 
@@ -76,11 +83,12 @@ export default function AdminUsersPage() {
         .update({ name: formName.trim(), role: formRole, is_active: formActive })
         .eq('id', editUser.id)
 
-      if (error) { setFormError(error.message); return }
+      if (error) { setFormError(error.message); setSubmitting(false); return }
     } else {
       const email = formEmail.toLowerCase().trim()
       if (!email.endsWith('@cognaizesys.com')) {
         setFormError('Email must end with @cognaizesys.com')
+        setSubmitting(false)
         return
       }
 
@@ -91,6 +99,7 @@ export default function AdminUsersPage() {
       if (error) {
         if (error.code === '23505') setFormError('This email is already registered.')
         else setFormError(error.message)
+        setSubmitting(false)
         return
       }
     }

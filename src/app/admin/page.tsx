@@ -13,14 +13,17 @@ export default function AdminDashboardPage() {
 
   useEffect(() => {
     async function fetchCounts() {
-      const [{ count: uc }, { count: ec }, { count: ic }] = await Promise.all([
+      const [users, expenses, invoices] = await Promise.all([
         supabase.from('users').select('*', { count: 'exact', head: true }),
         supabase.from('expenses').select('*', { count: 'exact', head: true }),
         supabase.from('invoices').select('*', { count: 'exact', head: true }),
       ])
-      setUserCount(uc || 0)
-      setExpenseCount(ec || 0)
-      setInvoiceCount(ic || 0)
+      if (users.error) console.error('Failed to fetch user count:', users.error.message)
+      if (expenses.error) console.error('Failed to fetch expense count:', expenses.error.message)
+      if (invoices.error) console.error('Failed to fetch invoice count:', invoices.error.message)
+      setUserCount(users.count || 0)
+      setExpenseCount(expenses.count || 0)
+      setInvoiceCount(invoices.count || 0)
     }
     fetchCounts()
   }, [])
