@@ -1,10 +1,30 @@
 "use client"
 
+import { useState, useEffect } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Users, Receipt, FileText } from 'lucide-react'
+import { supabase } from '@/lib/supabase'
 
 export default function AdminDashboardPage() {
+  const [userCount, setUserCount] = useState(0)
+  const [expenseCount, setExpenseCount] = useState(0)
+  const [invoiceCount, setInvoiceCount] = useState(0)
+
+  useEffect(() => {
+    async function fetchCounts() {
+      const [{ count: uc }, { count: ec }, { count: ic }] = await Promise.all([
+        supabase.from('users').select('*', { count: 'exact', head: true }),
+        supabase.from('expenses').select('*', { count: 'exact', head: true }),
+        supabase.from('invoices').select('*', { count: 'exact', head: true }),
+      ])
+      setUserCount(uc || 0)
+      setExpenseCount(ec || 0)
+      setInvoiceCount(ic || 0)
+    }
+    fetchCounts()
+  }, [])
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -20,7 +40,7 @@ export default function AdminDashboardPage() {
               <Users className="h-5 w-5 text-cognaize-purple" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold">0</div>
+              <div className="text-3xl font-bold">{userCount}</div>
             </CardContent>
           </Card>
 
@@ -30,7 +50,7 @@ export default function AdminDashboardPage() {
               <Receipt className="h-5 w-5 text-cognaize-purple" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold">0</div>
+              <div className="text-3xl font-bold">{expenseCount}</div>
             </CardContent>
           </Card>
 
@@ -40,7 +60,7 @@ export default function AdminDashboardPage() {
               <FileText className="h-5 w-5 text-cognaize-purple" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold">0</div>
+              <div className="text-3xl font-bold">{invoiceCount}</div>
             </CardContent>
           </Card>
         </div>

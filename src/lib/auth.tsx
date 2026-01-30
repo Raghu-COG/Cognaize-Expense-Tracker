@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { User } from '@/types'
+import { supabase } from '@/lib/supabase'
 
 interface AuthContextType {
   user: User | null
@@ -12,14 +13,6 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
-// Mock users for development (will be replaced with Supabase)
-const MOCK_USERS: User[] = [
-  { id: '1', email: 'admin@cognaizesys.com', name: 'Admin User', role: 'admin', created_at: new Date().toISOString() },
-  { id: '2', email: 'accountant@cognaizesys.com', name: 'Accountant User', role: 'accountant', created_at: new Date().toISOString() },
-  { id: '3', email: 'employee@cognaizesys.com', name: 'Employee User', role: 'employee', created_at: new Date().toISOString() },
-  { id: '4', email: 'consultant@cognaizesys.com', name: 'Consultant User', role: 'consultant', created_at: new Date().toISOString() },
-]
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
@@ -27,9 +20,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const stored = localStorage.getItem('cognaize_user')
     if (stored) {
-      setUser(JSON.parse(stored))
+      try {
+        const parsed = JSON.parse(stored)
+        // Re-validate user from DB on load
+        supabase
+          .from('users')
+          .select('*')
+          .eq('id', parsed.id)
+          .eq('is_active', true)
+          .single()
+          .then(({ data }) => {
+            if (data) {
+              setUser(data as User)
+              localStorage.setItem('cognaize_user', JSON.stringify(data))
+            } else {
+              localStorage.removeItem('cognaize_user')
+            }
+            setLoading(false)
+          })
+      } catch {
+        localStorage.removeItem('cognaize_user')
+        setLoading(false)
+      }
+    } else {
+      setLoading(false)
     }
-    setLoading(false)
   }, [])
 
   const login = async (email: string): Promise<{ success: boolean; error?: string }> => {
@@ -39,11 +54,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { success: false, error: 'Please use your @cognaizesys.com email address.' }
     }
 
-    // TODO: Replace with Supabase query
-    const foundUser = MOCK_USERS.find(u => u.email === normalizedEmail)
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', normalizedEmail)
+      .single()
 
-    if (!foundUser) {
+    if (error || !data) {
       return { success: false, error: 'Email not registered. Please contact admin.' }
+    }
+
+    const foundUser = data as User
+
+    if (!foundUser.is_active) {
+      return { success: false, error: 'Your account has been deactivated. Please contact admin.' }
     }
 
     setUser(foundUser)
